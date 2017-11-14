@@ -13,7 +13,7 @@ Download from : ``https://wordpress.org/plugins/iframe/ ``
 Place the wwinception.php in the root of the WordPress folder.
 
 ## Configuration
-The configuration needs to be done in the file ``wwinception.conf.php``
+The configuration needs to be done in the file ``wwinception.php``
 
 the settings to check are:
 
