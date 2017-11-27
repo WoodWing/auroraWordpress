@@ -202,9 +202,10 @@ function handleAWSSNSmessage($rawrequest)
  
 	  $topicARN = $request['TopicArn'];
 	  MyLog ('Handle Notification from ARN:' . $topicARN );
-	  if ( strpos($topicARN, 'inception') > 0 )
-	  {	
-		  MyLog ('Found inception ARN');
+	   if ( strpos($topicARN, 'inception') > 0 ||
+	  	   strpos($topicARN, 'ecs-export-topic' ) > 0)
+	   {	
+		  MyLog ('Found inception or aurora ARN');
 		  $message = json_decode($request['Message']);
 		  
 		  if (isset($_GET['iframe'])){

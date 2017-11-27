@@ -1,10 +1,31 @@
-# WWInception
+# Publish Aurora articles to Wordpress
 
-The wwinception.php file is a way to receive published articles from WoodWing Inception or Aurora. in this documentation where you read Inception you can also read Aurora.
+The code provided in the wwinception.php file is a way to let wordpress receive published articles from WoodWing Inception or Aurora. 
+In this documentation where you read Aurora you can also read Inception.
+
+With this file installed and configured, you will be able to publish articles in two ways:
+
+1) **As an Iframe:** This will show the article exactly as it was designed in Aurora. This option does not require any additional coding to make it work.
+
+2) **As native wordpress:** This will show the article as a native wordpress post. Due to all the different possible modules in wordpress, this code path will require additional programming to make it work 100%
+
+See also the discusion later on about  [who is in control](#choosing-the-display-mode-of-published-articles)
 
 
 ## Prerequisites
-The wordpress module 'iframe' is required when you want to show the Inception articles as-is.
+
+### Documentation
+Knowledge of WoodWing Enterprise and the Aurora publish process is advised.
+This can be found at the helpcenter: 
+
+[Setup channels for Inception](https://helpcenter.woodwing.com/hc/en-us/articles/205571815-Setting-up-a-custom-Publish-Channel-in-Inception)
+
+[Partner Enablement session](https://helpcenter.woodwing.com/hc/en-us/articles/115005474886-2017-11-09-Enterprise-Aurora-Publish-Channels)
+
+
+### wordpress module
+
+The wordpress module 'iframe' is required when you want to show the Aurora articles as-is.
 
 Download from : ``https://wordpress.org/plugins/iframe/ ``
 
@@ -36,10 +57,10 @@ the log folder location is specified in the LOGPATH
 ``define( 'LOGPATH'  , dirname(__FILE__) . '/wwlog/'); ``
 
 ##### (optional) URL to SubServer
-If your wordpress server is not reachable from the outside world then the Inception publish process can not push the article-packet to your WP.
-To work around this a 2-step process can be setup using a SubServer.
+If your wordpress server is not reachable from the outside world then the Aurora publish process can not push the article-packet to your WP.
+To work around this, a 2-step process can be setup using a SubServer.
 In this case the SubServer is running in the cloud and will receive the published articles. 
-Then your local WP can 'pull' the published articles from this SubServer.
+Your local WP can then 'pull' the published articles from this SubServer.
 
 To make this work, the URL to the SubServer needs to be specified.
 
@@ -54,21 +75,21 @@ The configuration can be tested by invoking the script with the 'testconfig' par
 ## Choosing the Display mode of published articles
 Who is in Control? 
 
-When publishing Inception articles to a webCMS you have a decision to make.
+When publishing Aurora articles to a webCMS you have a decision to make.
 
-The idea of Inception is that the writer has to full control about how the published article will look. But many webCMS systems are much more structured and will have custom 'widgets' to display for example images as slideshow or to embed video. So there is both a mismatch in concept (writer has design control versus webCMS has design control) and a mismatch in structure (writer decides on used widgets/components versus webCMS determines possible widgets/components)
+The idea of Aurora is that the writer has full control about how the published article will look. But many webCMS systems are much more structured and will have custom 'widgets' to display for example images as slideshow or to embed video or adverts. So there is both a mismatch in concept (writer has design control versus webCMS has design control) and a mismatch in structure (writer decides on used widgets/components versus webCMS determines possible widgets/components)
 
 with other words, you have to determine who should be in control, the writer or the webCMS?
 
 ### Writer in Control
 
-In case you put the writer in control of the published article, then we will display the article in WordPress as it was designed in Inception. This is done by using the iframe plugin. The complete Inception article will be rendered in the iframe, using all styling, widgets and javascript from Inception.
+In case you put the writer in control of the published article, then we will display the article in WordPress as it was designed in Aurora. This is done by using the iframe plugin. The complete Aurora article will be rendered in the iframe, using all styling, widgets and javascript from Aurora.
 
 This is a solution that will give a predictable result 'out-of-the-box'
 
-The disadvantage of the iframe method is that the article is shown as designed in Inception and the used styling can be totally different then the active WordPress thema.
+The disadvantage of the iframe method is that the article is shown as designed in Aurora and the used styling can be totally different then the active WordPress thema.
 
-For real live implementations it is offcourse possible to create an inception styling that mimics the look and feel of the WebCMS. Allthough this also can be seen as branding.
+For real live implementations it is offcourse possible to create an Aurora styling that mimics the look and feel of the WebCMS. Allthough this also can be seen as branding.
 
 ### WebCMS in Control
 In case you want to put the webCMS in control of the look and feel of the published articles then you will need to solve several technical challenges.
@@ -79,7 +100,14 @@ In case you want to put the webCMS in control of the look and feel of the publis
 - uploading videos to the correct WP structure
 - translate element/component names to WP-styling names
 
-Based on the above (possible incomplete) list you can understand that this solution will not be available out-of-the-box. This solution will always be a fine-tuned connection between the possibilities of the CMS, custom styling in Inception and also some PHP coding to make mapping/conversions.
+Based on the above (possible incomplete) list you can understand that this solution will not be available out-of-the-box. This solution will always be a fine-tuned connection between the possibilities of the CMS, custom styling in Aurora and also some PHP coding to make mapping/conversions.
+
+Allthough work needs to be done to have a complete working setup without using the iframe, it is already possible to publish also in this 'mode'. The text and normal images will appear. Slideshow and more complex images (hero) will not display correctly. 
+
+
+# Setup the custom channel
+
+As this wordpress integration can be used by both Inception and Wordpress we will give highlevel guidelines only. Detailed instructions can be found in the helpcenter.
 
 
 ## Inception: Create the Custom channel
@@ -93,7 +121,7 @@ The url you need to specify is depending on the location of your wordpress
 
 assume your wordpress is located at ``http://MyOwnWordpress``
 
-then to make the publish work, you will need to specify the endpoint as
+then to make the publish work as native wordpress post, you will need to specify the endpoint as:
 
 ``http://<server>/wordpress/wwinception.php``
 
