@@ -2,13 +2,20 @@
 
 // 
 // -wwinception-
-// version 0.1
+// version 0.2
 // 
 // interface to receive or get WoodWing Inception articles and store them in wordpress
 //
 // required wordpress plugin:
-// - https://wordpress.org/plugins/iframe/ 
+// - https://wordpress.org/plugins/auto-iframe/
+// - https://wordpress.org/plugins/search-everything/
 // 
+// Change history
+// 0.2 - moved parsing/handling of aurora/inception message to aurora class
+// 0.2 - extract 'hero' component from article and add as feature image
+// 0.2 - extract part of text as excerpt
+// 0.2 - use external-id as reference for detecting update
+//
 // --------------------------------------------------
 
 // ----------------------
@@ -26,7 +33,7 @@ define( 'LOGPATHWITHIP', false);
 
 // if you want to run from local server, specify the URL to the 
 // AWSSNS subserver, leave empty to disable subserver functionality
-define( 'AWSSNSURL' , 'http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/subserver/subserver.php' );
+define( 'AWSSNSURL' , '' );
 define( 'SUBKEY'	, 'wvr-localhost');
 
 // --------------------------------------------------
@@ -54,6 +61,8 @@ define( 'LOG_IP', serialize( array('localhost',
 ini_set( 'date.timezone', 'Europe/Amsterdam');
 
 
+//Lenght of the excerpt in characters 
+define( 'MAX_EXCERPT_LENGTH', 250 );
 
 // ========================================
 // take care the php problems are reported
@@ -214,11 +223,18 @@ function handleAWSSNSmessage($rawrequest)
 		  }
 		  
 		  MyLog (' handling message:' . print_r($message,1));
+		  
+		  // we use the publish system ID as unique key,
+		  // for Inception this key is an elvis-ID
+		  // for Aurora this key is an enterprise-ID
+		  $storyId = $message->tenantId . '-' . $message->id;
+		  
+		  MyLog (' storyId: ' . $storyId );
 	  		
 	  	  if (	isset($message->iframe) &&
 				$message->iframe == 'true')
 			{
-				upsertWPfolder( $message );
+				upsertWPIframe( $message, $storyId );
 			}
 			else
 			{	
@@ -259,16 +275,21 @@ function getFiles($allFiles = false)
 	foreach ( $files as $name => $data )
 	{
 		print("-------------<br>\n");
-		print("Handling file:$name<br>\n");
+		print("Handling file: $name<br>\n");
 		MyLog("-------------");
-		MyLog("Handling file:$name");
+		MyLog("Handling file: $name");
 		MyLog("-------------");
+	
 		$message = json_decode($data);
 		MyLog("message:" . print_r($message,1));
+		
+		$storyId = $message->tenantId . '-' . $message->id;
+		MyLog (' storyId: ' . $storyId );
+
 		if (isset($message->iframe) &&
 			$message->iframe == 'true')
 		{
-			upsertWPfolder( $message );
+			upsertWPIframe( $message , $storyId);
 		}
 		else
 		{	
@@ -284,24 +305,25 @@ function getFiles($allFiles = false)
 // then an article in wp is created, containing a iframe that points to the
 // article structure
 
-function upsertWPfolder( $data )
+function upsertWPIframe( $message, $storyId )
 {
-	$url = $data->url;
-	$ID  = $data->id;
-	MyLog ( "Loading data from:$url " );
-	$zipdata = file_get_contents( $url);
-	// save zipfile to our tempfolder
-	$zipname = basename($url);
+	$aurora = New Aurora($message);
+	
+	// save to disk
+	$zipname = $aurora->getArticleZipName();
+	MyLog ("zipname:" . $zipname  );
+	// store the zipfile in or tempfolder
+	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
+	
 	$dirname = basename($zipname,'.article');
-	MyLog ( "zipname:" . $zipname  );
-	file_put_contents( TEMPDIR . $zipname, $zipdata);
 	
 	// prepare the wp-side
 	$upload_dir = wp_upload_dir();
 	//MyLog ( print_r($upload_dir,1));
-	$articleDirName =  $ID . '-' . $dirname;
+	$articleDirName =  $aurora->getArticleID() . '-' . $dirname;
 	$articleDir = $upload_dir['path'] . '/' . $articleDirName;
 	$articleUrl = $upload_dir['url']  . '/' . $articleDirName . '/output.html';
+	$articleHtmlFileName = $articleDir . '/output.html';
 	
 	if ( ! file_exists($articleDir) )
 	{
@@ -321,65 +343,203 @@ function upsertWPfolder( $data )
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
     	$zip->extractTo($articleDir);
 		$zip->close();
+
+		//Get plain content		
+		$metaData = $aurora->getArticleMetadata(); //json_decode(file_get_contents($data->metadataUrl));
+		$plainContent = $metaData->MetaData->ContentMetaData->PlainContent;
+				
+		//Extract content from hero component and remove it from the html	
+		$html = file_get_contents ($articleHtmlFileName);		
+		$heroStartTag = "<div class=\"_hero-bg-box\">";
+		$heroEndTag = "</h3>\n</figcaption>\n</div>\n</div>\n</figure>\n</div>";			
+		$standfirstStartTag = "<div class=\"headline\">";
+		$standfirstEndTag = "</div>";		
+		$titleStartTag = "<h2 class=\"text title\" doc-editable=\"text\">";
+		$titleEndTag = "</h2>";		
+				
+		$featuredImageURI = "";
+		if (strpos ($html, $heroStartTag) !== false) {
+            //Extract the hero html component
+			$heroStart = strpos ($html, $heroStartTag); 
+			$heroEnd   = strpos ($html, $heroEndTag) + strlen ($heroEndTag);
+			$heroHTML  = substr ($html, $heroStart, $heroEnd - $heroStart);
 		
+			//Remove the hero html 
+			$html = substr_replace ($html, "", $heroStart, $heroEnd - $heroStart);
+			file_put_contents ($articleHtmlFileName, $html);
+		
+			//Get the image url for the teaser image 
+			$imageStartTag = "url(&quot;";
+			$imageEndTag = "&quot;)";
+			$imageStart = strpos ($heroHTML, $imageStartTag) + strlen ($imageStartTag); 
+			$imageEnd = strpos ($heroHTML, $imageEndTag) ;
+			$featuredImageURI = $articleDir . "/" . substr ($heroHTML, $imageStart, $imageEnd - $imageStart);		
+				
+			//Generate title	
+			$articleTitle = createPageTitle ($heroHTML);						
+
+		} else if (strpos ($html, $standfirstStartTag) !== false) {
+			//load the title from the standfirst component
+
+            //Extract the standfirst html
+			$standfirstStart = strpos ($html, $standfirstStartTag); 
+			$standfirstEnd  = strpos ($html, $standfirstEndTag) + strlen ($standfirstEndTag);
+			$standfirstHTML = substr ($html, $standfirstStart, $standfirstEnd - $standfirstStart);
+		
+			//Remove the standfirst html 
+			$html = substr_replace ($html, "", $standfirstStart, $standfirstEnd - $standfirstStart);
+			file_put_contents ($articleHtmlFileName, $html);
+						
+			//Generate title	
+			$articleTitle = createPageTitle ($standfirstHTML);			
+		} else if (strpos ($html, $titleStartTag) !== false) {
+			//load the title from the title component
+
+            //Extract the title html
+			$titleStart = strpos ($html, $titleStartTag); 
+			$titleEnd = strpos ($html, $titleEndTag) + strlen ($titleEndTag);
+			$titleHTML = substr ($html, $titleStart, $titleEnd - $titleStart);
+		
+			//Remove the title html 
+			$html = substr_replace ($html, "", $titleStart, $titleEnd - $titleStart);
+			file_put_contents ($articleHtmlFileName, $html);
+						
+			//Generate title	
+			$articleTitle = createPageTitle ($titleHTML);			
+		} else {
+			//use article title
+			$articleTitle = $aurora->getArticleName();
+		}		 
+
+		//Generate excerpt from first paragraphs (p, h, etc) 		
+		preg_match_all('|class="text [^>]+>(.*)</|iU', $html, $pTags);			
+		$excerpt = "";
+		for ($i = 0; $i < count($pTags[1]); $i++) {
+			if ($excerpt != "") {
+				$excerpt = $excerpt . '<br>';
+			}
+			$excerpt = $excerpt . $pTags[1][$i];
+			if (sizeof ($excerpt) > MAX_EXCERPT_LENGTH) {
+				break;
+			}
+		}
+		$excerpt = truncateString ($excerpt, MAX_EXCERPT_LENGTH, true);
+		 
 		// create the article pointing to this folder
 		// use format required for iframe plugin
-		$articleHTML = '[iframe src="' . $articleUrl . '"  width="800" height="600" frameborder="0"]';
-		$post_id = post_exists($data->name);
-		MyLog ( "existing post found with ID:$post_id" );
+		$articleHTML = '[auto-iframe link=' . $articleUrl . ']';
+
+		//Check if we are updating an existing post
+		$posts = get_posts(array(
+			'numberposts'	=> -1,
+			'post_type'		=> 'post',
+			'meta_key'		=> 'Enterprise-Id',
+			'meta_value'	=> $storyId
+		));
 		
+		MyLog('posts:' . print_r($posts,1));
+		$post_id = 0;
+		if (count($posts) > 0) {
+			$post_id = $posts[0]->ID;
+			MyLog ( "existing post found with ID:$post_id" );
+		}
+
 		$wp_error = false;
 		if ( $post_id > 0 ){
 			MyLog ( 'updating post' );
 			$postarr = get_post( $post_id , 'ARRAY_A');
 			
 			$postarr['post_content'] = $articleHTML;
+			$postarr['post_title'] = wp_strip_all_tags( $articleTitle );
+			$postarr['post_excerpt'] = $excerpt;
 			// switch off the versioning for this post
 			remove_action( 'post_updated', 'wp_save_post_revision' );
 			$post_id = wp_update_post( $postarr,  $wp_error  ); //
 			MyLog ("wp_error:" . print_r($wp_error,1));
 			// switch on the versioning for this post
 			add_action( 'post_updated', 'wp_save_post_revision' ); 
-			
-		}else{
+			update_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
+		} else {
 			MyLog ( 'insert new post' );
 			$postarr = array(
 			 'ID'		=> $post_id, // does not seem to work
-			 'post_title'    => wp_strip_all_tags( $data->name ),
+			 'post_title'    => wp_strip_all_tags( $articleTitle ),
 			 'post_content'  => $articleHTML,
 			 'post_status'   => 'publish',
 			 'post_author'   => 1,
-			 'post_category' => array( 8,39 )
+			 'post_category' => array( 8,39 ),
+			 'post_excerpt'  => $excerpt
 			);
 			$post_id = wp_insert_post( $postarr,  $wp_error  );
 			MyLog ("wp_error:" . print_r($wp_error,1));
+			
+			//Set the Enteprise-ID to uniquely identity the post and find it when updating the content
+			add_post_meta ($post_id, "Enterprise-Id", $storyId);			
+			add_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
 		}
+		
+		//Set the featured image
+		//Todo, cleanup previous image
+		if ($featuredImageURI != "") {
+			$wp_filetype = wp_check_filetype($featuredImageURI, null );
+			$attachment = array(
+				'post_mime_type' => $wp_filetype['type'],
+				'post_title' => sanitize_file_name($featuredImageURI),
+				'post_content' => '',
+				'post_status' => 'inherit'
+			);
+			$attach_id = wp_insert_attachment( $attachment, $featuredImageURI, $post_id );
+			require_once(ABSPATH . 'wp-admin/includes/image.php');
+			$attach_data = wp_generate_attachment_metadata( $attach_id, $featuredImageURI );
+			$res1= wp_update_attachment_metadata( $attach_id, $attach_data );
+			$res2= set_post_thumbnail( $post_id, $attach_id );			
+		}   			
+	
 		MyLog ( 'Created or updated post with ID:' . $post_id );
-		
-		
 	}	
 
 }
 
-
-
+/*
+* Create the title from the hero or standfirst component
+* @componentHTML The HTML of the hero or standfirst component
+*/
+function createPageTitle ($componentHTML) {
+	$articleTitle = "";
+	
+ 	preg_match_all('|<h1[^>]+>(.*)</h[^>]+>|iU', $componentHTML, $h1Headings);
+	preg_match_all('|<h2[^>]+>(.*)</h[^>]+>|iU', $componentHTML, $h2Headings);	
+	
+	if (count ($h1Headings) > 0 ) {
+		$articleTitle = $h1Headings[1][0] ; 
+	}
+		
+	if ((count ($h2Headings) > 0 ) && ($h2Headings[1][0] != "")) {
+		if ($articleTitle != "") {
+			$articleTitle = $articleTitle . ' - ';
+		}	
+		$articleTitle = $articleTitle . $h2Headings[1][0];
+	}
+			
+	return $articleTitle;			  
+}
 
 // this function will upload the related images to the upload folder
 // replace the url in the article to point to the uploaded article
 // and store the article as new article
 // this will cause some display problems bcause of javasript and styling not working correctly
 
-function upsertWPArticle( $data )
+function upsertWPArticle( $message )
 {
-	$url = $data->url;
-	$ID  = $data->id;
-	MyLog ( "Loading data from:$url ");
-	$zipdata = file_get_contents( $url);
-	// save to disk
-	$zipname = basename($url);
-	MyLog ("zipname:" . $zipname  );
-	file_put_contents( TEMPDIR . $zipname, $zipdata);
+	$aurora = New Aurora($message);
 	
+	// save to disk
+	$zipname = $aurora->getArticleZipName();
+	MyLog ("zipname:" . $zipname  );
+	// store the zipfile in or tempfolder
+	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
+	
+		
 	$dirname = basename($zipname,'.article');
 	if ( $dirname != '')
 	{
@@ -396,6 +556,7 @@ function upsertWPArticle( $data )
 		MyLog ( "no dirname found, exit" );
 		return;
 	}	
+	
 	$zip = new ZipArchive;
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
     	$zip->extractTo(TEMPDIR . $dirname);
@@ -406,9 +567,14 @@ function upsertWPArticle( $data )
 		$articleHTML = file_get_contents(TEMPDIR . $dirname .'/output.html');
 		$upload_dir = wp_upload_dir();
 		
+		
+		// --------------------------------
+		// time to do some wordpress logic
+		// --------------------------------
+
 		// upload the template/design.css
-		$wpname = $ID . '-design.css';
-		$uploadFile = $upload_dir['path'] . '/' . $wpname;
+		$designCS = $aurora->getArticleID() . '-design.css';
+		$uploadFile = $upload_dir['path'] . '/' . $designCS;
 		if ( ! file_exists($uploadFile))
 		{
 			MyLog ("upload $uploadFile" );
@@ -419,9 +585,9 @@ function upsertWPArticle( $data )
 		}
 		$articleHTML = str_replace ("template/design.css",  $wpfile['url'] ,$articleHTML);
 		
-		// upload the template/design.css
-		$wpname = $ID . '-vendor.js';
-		$uploadFile = $upload_dir['path'] . '/' . $wpname;
+		// upload the vendor.js
+		$vendorJs = $aurora->getArticleID() . '-vendor.js';
+		$uploadFile = $upload_dir['path'] . '/' . $vendorJs;
 		if ( ! file_exists($uploadFile))
 		{
 			MyLog ( "upload $uploadFile" );
@@ -438,8 +604,8 @@ function upsertWPArticle( $data )
 		foreach( $images as $image )
 		{
 			// check if file exists
-			$fname = $ID . '-' . basename($image);
-			MyLog('upload_dir :' . print_r($upload_dir,1) );
+			$fname = $aurora->getArticleID() . '-' . basename($image);
+			//MyLog('upload_dir :' . print_r($upload_dir,1) );
 			$uploadFile = $upload_dir['path'] . '/' . $fname;
 			
 			MyLog("Checking for file [$uploadFile]");
@@ -461,9 +627,16 @@ function upsertWPArticle( $data )
         	
 		}
 		
-		file_put_contents( TEMPDIR . '/article.txt', $articleHTML );
+		file_put_contents( $upload_dir['path'] . '/article.txt', $articleHTML );
+		
+
+		$WPNodeName = $aurora->getArticleName(); 
+		
+		MyLog ( "doing our Wordpress thing:" . $WPNodeName );
+		
+		
 		// Create post object
-		$post_id = post_exists($data->name);
+		$post_id = post_exists($WPNodeName);
 		MyLog ( "existing post found with ID:$post_id");
 		
 		
@@ -485,11 +658,11 @@ function upsertWPArticle( $data )
 			MyLog ( 'insert new post' );
 			$postarr = array(
 			 'ID'		=> $post_id, // does not seem to work
-			 'post_title'    => wp_strip_all_tags( $data->name ),
+			 'post_title'    => wp_strip_all_tags( $WPNodeName ),
 			 'post_content'  => $articleHTML,
 			 'post_status'   => 'publish',
 			 'post_author'   => 1,
-			 'post_category' => array( 8,39 )
+			 'post_category' => array( 8,39 ) // use metadata
 			);
 			wp_insert_post( $postarr,  $wp_error  );
 		}
@@ -777,3 +950,168 @@ function encodePath( $path2encode )
   return $newPath;
 }
 
+/**
+* Truncates to nearest preceding space of target character. Demo
+* @str The string to be truncated
+* @chars The amount of characters to be stripped, can be overridden by $to_space
+* @to_space boolean for whether or not to truncate from space near $chars limit
+*/
+function truncateString($str, $chars, $to_space, $replacement="...") {
+   if($chars > strlen($str)) return $str;
+
+   $str = substr($str, 0, $chars);
+   $space_pos = strrpos($str, " ");
+   if($to_space && $space_pos >= 0) 
+       $str = substr($str, 0, strrpos($str, " "));
+
+   return($str . $replacement);
+}
+
+
+
+/* - Aurora -
+
+	 functions handling the Aurora specific data
+*/	 
+
+class Aurora {
+	
+	/* structure of the message being received from AWS
+   [id] => 146
+    [name] => da_1-iframe
+    [url] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/da-1-iframe.article
+    [metadataUrl] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/metadata.json
+    [articleJsonUrl] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/article.json
+    [tenantId] => f21d1f27-68bc-f4cc-8fba-b91ab5d99c1c
+    [brand] => 1
+	*/
+	
+	private $_awsMessage = null;
+	private $_errors = array();
+	
+	public function __construct( $message = null)
+    {
+        if($message){
+            $this->_awsMessage = $message;
+            $this->_errors = array();
+        }
+    }
+	
+	
+	
+	public function getArticleID()
+	{
+		 if($this->_awsMessage){
+			 return $this->_awsMessage->id;
+		 }
+		 
+		 return false;	 
+
+	}
+
+	
+	public function getArticleName()
+	{
+		if($this->_awsMessage){
+			 return $this->_awsMessage->name;
+		 }
+		 
+		 return false;	
+	}
+	
+	public function getArticleZipName()
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipname = basename($this->_awsMessage->url);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipname;
+		 }
+		 
+		 return false;
+	}
+	
+	//
+	// get the zipfile from the path specified in the message
+	// and download it to the path specified
+	//
+	public function getArticleZipToPath($zippath)
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipdata = file_get_contents($this->_awsMessage->url);
+			 	file_put_contents( $zippath, $zipdata);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipdata;
+		 }
+		 
+		 return false;
+	}
+	
+	//
+	// get the zipfile as raw data
+	// 
+	public function getArticleZipData()
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipdata = file_get_contents($this->_awsMessage->url);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipdata;
+		 }
+		 
+		 return false;
+	}
+	
+		
+	public function getArticleMetadata()
+	{
+		 if($this->_awsMessage){
+			 try {
+			 	$metadata = file_get_contents($this->_awsMessage->metadataUrl);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article metadata, error: $e";
+			 }
+			 return json_decode($metadata);
+		 }
+		 
+		 return false;
+	}
+	
+	public function getArticleJSON()
+	{
+		 if($this->_awsMessage){
+			 try {
+			 	$articleJSON = file_get_contents($this->_awsMessage->articleJsonUrl);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article JSON, error: $e";
+			 }
+			 return json_decode($articleJSON);
+		 }
+		 
+		 return false;
+	}
+	
+	
+	
+	public function getErrors ()
+	{
+		if($this->_errors){
+			return $this->_errors;
+		}
+		return false;
+		
+	}
+	
+}
