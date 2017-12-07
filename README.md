@@ -23,11 +23,18 @@ This can be found at the helpcenter:
 [Partner Enablement session](https://helpcenter.woodwing.com/hc/en-us/articles/115005474886-2017-11-09-Enterprise-Aurora-Publish-Channels)
 
 
-### wordpress module
+### wordpress modules
 
-The wordpress module 'iframe' is required when you want to show the Aurora articles as-is.
+Two wordpress modules needs to be installed.
 
-Download from : ``https://wordpress.org/plugins/iframe/ ``
+The iframe module will allow you to view the published article as it was designed in Aurora
+
+The search-everything module will help you to search on your wordpress site for the content of the published articles
+
+Download from :
+`` - https://wordpress.org/plugins/auto-iframe``
+``- https://wordpress.org/plugins/search-everything``
+
 
 
 ## Installation 
