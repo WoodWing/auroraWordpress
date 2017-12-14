@@ -1,4 +1,5 @@
 # Publish Aurora articles to Wordpress
+*current version v0.3*
 
 The code provided in the wwinception.php file is a way to let wordpress receive published articles from WoodWing Inception or Aurora. 
 In this documentation where you read Aurora you can also read Inception.
@@ -35,10 +36,35 @@ Download from :
 `` - https://wordpress.org/plugins/auto-iframe``
 ``- https://wordpress.org/plugins/search-everything``
 
-
+### PHP dependencies
+To be able to unzip the package that will be downloaded, the php-zip module should be active within PHP configuration. 
 
 ## Installation 
 Place the wwinception.php in the root of the WordPress folder.
+
+#### overrule styling
+It is now possible to overrule the styling that is send with the article (design.css). With this overrule, you can tune the Aurora component styling to match your CMS styling.
+
+To do so, create a folder called ``AuroraTemplate`` in the ``wp-contents/uploads`` folder and place the `design.css` in that folder.
+
+Then set the URL to this design.css in the configuration.
+
+Specify the URL to your side in the ``MY_OWN_URL``
+
+and the link to the CSS in ``ARTICLE_CSS_LINK``
+if you leave ``ARTICLE_CSS_LINK`` empty, then the .css from the article will be used.
+
+``define('MY_OWN_URL' , 'http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/wordpress');``
+``define('ARTICLE_CSS_LINK', MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/design.css');``
+
+#### overrule vendor.js
+In the same way as overruling the .css the vendor.js can be overruled
+
+Place the ``vendor.js`` in the ``wp-contents/uploads`` folder
+and specify the path in the define ``ARTICLE_JS_LINK``
+
+``define('ARTICLE_JS_LINK' , MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/vendor.js');``
+
 
 ## Configuration
 The configuration needs to be done in the file ``wwinception.php``

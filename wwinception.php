@@ -2,7 +2,7 @@
 
 // 
 // -wwinception-
-// version 0.2
+// version 0.3
 // 
 // interface to receive or get WoodWing Inception articles and store them in wordpress
 //
@@ -11,6 +11,9 @@
 // - https://wordpress.org/plugins/search-everything/
 // 
 // Change history
+// 0.3 - Only one function used for creating the post, both for native and iframe
+// 0.3 - 'Tunable' design.css can be specified. If specified then this CSS will overrule the one from the article
+// 0.3 - 'Tunable' vendor.js can be specified. If specified then this JS will overrule the one from the article
 // 0.2 - moved parsing/handling of aurora/inception message to aurora class
 // 0.2 - extract 'hero' component from article and add as feature image
 // 0.2 - extract part of text as excerpt
@@ -34,7 +37,13 @@ define( 'LOGPATHWITHIP', false);
 // if you want to run from local server, specify the URL to the 
 // AWSSNS subserver, leave empty to disable subserver functionality
 define( 'AWSSNSURL' , '' );
-define( 'SUBKEY'	, 'wvr-localhost');
+define( 'SUBKEY'	, '');
+
+// If not empty the following links will be injected when embedding the article
+// make sure you installed these file manually
+define('MY_OWN_URL' , 'http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/wordpress');
+define('ARTICLE_CSS_LINK', MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/design.css');
+define('ARTICLE_JS_LINK' , MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/vendor.js');
 
 // --------------------------------------------------
 // if you want to finetune the logging,
@@ -234,11 +243,11 @@ function handleAWSSNSmessage($rawrequest)
 	  	  if (	isset($message->iframe) &&
 				$message->iframe == 'true')
 			{
-				upsertWPIframe( $message, $storyId );
+				upsertWPfolder( $message, $storyId, true );
 			}
 			else
 			{	
-				upsertWPArticle( $message );
+				upsertWPfolder( $message, $storyId, false  );
 			}   	
 		 
 		  MyLog ( "done" );
@@ -279,22 +288,21 @@ function getFiles($allFiles = false)
 		MyLog("-------------");
 		MyLog("Handling file: $name");
 		MyLog("-------------");
-	
 		$message = json_decode($data);
 		MyLog("message:" . print_r($message,1));
 		
 		$storyId = $message->tenantId . '-' . $message->id;
 		MyLog (' storyId: ' . $storyId );
-
-		if (isset($message->iframe) &&
-			$message->iframe == 'true')
+		
+		if (	isset($message->iframe) &&
+				$message->iframe == 'true')
 		{
-			upsertWPIframe( $message , $storyId);
+			upsertWPfolder( $message, $storyId, true );
 		}
 		else
 		{	
-		    upsertWPArticle( $message );
-		}    
+			upsertWPfolder( $message, $storyId, false  );
+		}  
 	}
 }
 
@@ -305,25 +313,35 @@ function getFiles($allFiles = false)
 // then an article in wp is created, containing a iframe that points to the
 // article structure
 
-function upsertWPIframe( $message, $storyId )
+function upsertWPfolder( $data, $storyId, $iframe )
 {
-	$aurora = New Aurora($message);
+	$aurora = New Aurora($data);
 	
 	// save to disk
 	$zipname = $aurora->getArticleZipName();
 	MyLog ("zipname:" . $zipname  );
 	// store the zipfile in or tempfolder
 	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
-	
-	$dirname = basename($zipname,'.article');
+
+	// get the ID of the article
+	$ID  = $aurora->getArticleID();
 	
 	// prepare the wp-side
 	$upload_dir = wp_upload_dir();
-	//MyLog ( print_r($upload_dir,1));
-	$articleDirName =  $aurora->getArticleID() . '-' . $dirname;
-	$articleDir = $upload_dir['path'] . '/' . $articleDirName;
-	$articleUrl = $upload_dir['url']  . '/' . $articleDirName . '/output.html';
+	$articleDirName =  $ID . '-' . $dirname;
+	
+	if (!$iframe) {
+		//Extract content to temp dir 
+		$articleDir = TEMPDIR . '/' . $articleDirName; 
+		
+	} else {
+	    //Extract content to upload dir 
+	    $articleDir = $upload_dir['path'] . '/' . $articleDirName;
+		$articleUrl = $upload_dir['url']  . '/' . $articleDirName . '/output.html';			
+	}	
 	$articleHtmlFileName = $articleDir . '/output.html';
+	
+	
 	
 	if ( ! file_exists($articleDir) )
 	{
@@ -344,12 +362,14 @@ function upsertWPIframe( $message, $storyId )
     	$zip->extractTo($articleDir);
 		$zip->close();
 
-		//Get plain content		
-		$metaData = $aurora->getArticleMetadata(); //json_decode(file_get_contents($data->metadataUrl));
-		$plainContent = $metaData->MetaData->ContentMetaData->PlainContent;
+		//Plain content is required for searching in Wordpress if iFrame is used 		
+		if ($iframe) {		
+			$metaData = json_decode(file_get_contents($data->metadataUrl));
+			$plainContent = $metaData->MetaData->ContentMetaData->PlainContent;
+		}
 				
-		//Extract content from hero component and remove it from the html	
-		$html = file_get_contents ($articleHtmlFileName);		
+		//Extract content from hero, standfirst or title component and remove it from the html	
+		$articleHTML = file_get_contents ($articleHtmlFileName);		
 		$heroStartTag = "<div class=\"_hero-bg-box\">";
 		$heroEndTag = "</h3>\n</figcaption>\n</div>\n</div>\n</figure>\n</div>";			
 		$standfirstStartTag = "<div class=\"headline\">";
@@ -357,92 +377,122 @@ function upsertWPIframe( $message, $storyId )
 		$titleStartTag = "<h2 class=\"text title\" doc-editable=\"text\">";
 		$titleEndTag = "</h2>";		
 				
-		$featuredImageURI = "";
-		if (strpos ($html, $heroStartTag) !== false) {
+		$featuredImageName = "";
+		if (strpos ($articleHTML, $heroStartTag) !== false) {
             //Extract the hero html component
-			$heroStart = strpos ($html, $heroStartTag); 
-			$heroEnd   = strpos ($html, $heroEndTag) + strlen ($heroEndTag);
-			$heroHTML  = substr ($html, $heroStart, $heroEnd - $heroStart);
+			$heroStart = strpos ($articleHTML, $heroStartTag); 
+			$heroEnd = strpos ($articleHTML, $heroEndTag) + strlen ($heroEndTag);
+			$heroHTML = substr ($articleHTML, $heroStart, $heroEnd - $heroStart);
 		
 			//Remove the hero html 
-			$html = substr_replace ($html, "", $heroStart, $heroEnd - $heroStart);
-			file_put_contents ($articleHtmlFileName, $html);
+			$articleHTML = substr_replace ($articleHTML, "", $heroStart, $heroEnd - $heroStart);
+			file_put_contents ($articleHtmlFileName, $articleHTML);
 		
 			//Get the image url for the teaser image 
-			$imageStartTag = "url(&quot;";
+			$imageStartTag = "url(&quot;img/";
 			$imageEndTag = "&quot;)";
 			$imageStart = strpos ($heroHTML, $imageStartTag) + strlen ($imageStartTag); 
-			$imageEnd = strpos ($heroHTML, $imageEndTag) ;
-			$featuredImageURI = $articleDir . "/" . substr ($heroHTML, $imageStart, $imageEnd - $imageStart);		
+			$imageEnd = strpos ($heroHTML, $imageEndTag) ;		
+			$featuredImageName = substr ($heroHTML, $imageStart, $imageEnd - $imageStart);		
 				
 			//Generate title	
 			$articleTitle = createPageTitle ($heroHTML);						
 
-		} else if (strpos ($html, $standfirstStartTag) !== false) {
+		} else if (strpos ($articleHTML, $standfirstStartTag) !== false) {
 			//load the title from the standfirst component
 
             //Extract the standfirst html
-			$standfirstStart = strpos ($html, $standfirstStartTag); 
-			$standfirstEnd  = strpos ($html, $standfirstEndTag) + strlen ($standfirstEndTag);
-			$standfirstHTML = substr ($html, $standfirstStart, $standfirstEnd - $standfirstStart);
+			$standfirstStart = strpos ($articleHTML, $standfirstStartTag); 
+			$standfirstEnd = strpos ($articleHTML, $standfirstEndTag) + strlen ($standfirstEndTag);
+			$standfirstHTML = substr ($articleHTML, $standfirstStart, $standfirstEnd - $standfirstStart);
 		
 			//Remove the standfirst html 
-			$html = substr_replace ($html, "", $standfirstStart, $standfirstEnd - $standfirstStart);
-			file_put_contents ($articleHtmlFileName, $html);
+			$articleHTML = substr_replace ($articleHTML, "", $standfirstStart, $standfirstEnd - $standfirstStart);
+			file_put_contents ($articleHtmlFileName, $articleHTML);
 						
 			//Generate title	
 			$articleTitle = createPageTitle ($standfirstHTML);			
-		} else if (strpos ($html, $titleStartTag) !== false) {
+		} else if (strpos ($articleHTML, $titleStartTag) !== false) {
 			//load the title from the title component
 
             //Extract the title html
-			$titleStart = strpos ($html, $titleStartTag); 
-			$titleEnd = strpos ($html, $titleEndTag) + strlen ($titleEndTag);
-			$titleHTML = substr ($html, $titleStart, $titleEnd - $titleStart);
+			$titleStart = strpos ($articleHTML, $titleStartTag); 
+			$titleEnd = strpos ($articleHTML, $titleEndTag) + strlen ($titleEndTag);
+			$titleHTML = substr ($articleHTML, $titleStart, $titleEnd - $titleStart);
 		
 			//Remove the title html 
-			$html = substr_replace ($html, "", $titleStart, $titleEnd - $titleStart);
-			file_put_contents ($articleHtmlFileName, $html);
+			$articleHTML = substr_replace ($articleHTML, "", $titleStart, $titleEnd - $titleStart);
+			file_put_contents ($articleHtmlFileName, $articleHTML);
 						
 			//Generate title	
 			$articleTitle = createPageTitle ($titleHTML);			
 		} else {
 			//use article title
-			$articleTitle = $aurora->getArticleName();
+			$articleTitle = $data->name;
 		}		 
 
 		//Generate excerpt from first paragraphs (p, h, etc) 		
-		preg_match_all('|class="text [^>]+>(.*)</|iU', $html, $pTags);			
-		$excerpt = "";
-		for ($i = 0; $i < count($pTags[1]); $i++) {
-			if ($excerpt != "") {
-				$excerpt = $excerpt . '<br>';
-			}
-			$excerpt = $excerpt . $pTags[1][$i];
-			if (sizeof ($excerpt) > MAX_EXCERPT_LENGTH) {
-				break;
-			}
-		}
-		$excerpt = truncateString ($excerpt, MAX_EXCERPT_LENGTH, true);
-		 
-		// create the article pointing to this folder
-		// use format required for iframe plugin
-		$articleHTML = '[auto-iframe link=' . $articleUrl . ']';
+		$excerpt = createExcerpt($articleHTML);
+	
+		if (!$iframe) {			
+			//Use the body of the article for the content of the post
+			
+			//Remove the HTML header
+			$articleHTML = getHTMLBody ($articleHTML);
+			
+			//Check if we have to add a css or js link
+			if (ARTICLE_CSS_LINK != "") {
+				$articleHTML = "<link rel='stylesheet' href='" . ARTICLE_CSS_LINK . "'/>" . $articleHTML; 
+			}		
+			if (ARTICLE_JS_LINK != "") {
+				$articleHTML = "<script src='" . ARTICLE_JS_LINK . "'></script>" . $articleHTML; 
+			}		
+		
+			//Upload the images and replace the links in the article
+			$images = getImagesFromPath( $articleDir . '/img');		
+			$upload_dir = wp_upload_dir();
+		
+			foreach( $images as $image ) {
+				// check if file exists
+				$fname = $ID . '-' . basename($image);
+				MyLog('upload_dir :' . print_r($upload_dir,1) );
+				$uploadFile = $upload_dir['path'] . '/' . $fname;
+				
+				MyLog("Checking for file [$uploadFile]");
+				if ( ! file_exists($uploadFile))
+				{
+					MyLog ( "uploading file" );
+					$wpfile = wp_upload_bits($fname, null,file_get_contents($image) );
+				}else{
+					MyLog ( "skipping upload, file already there !" );
+					$wpfile['url'] =  $upload_dir['url'] . '/' . $fname;
+				}
+			
+				MyLog ("wpfile:" . print_r( $wpfile,1) );
+				//Update the image url in the html
+       			MyLog ("Replacing [" .  basename($image) . "]  with [" . $wpfile['url'] . "]" );
+       		
+    	   		$articleHTML = str_replace ("&quot;img/" . basename($image) . "&quot;", "'". $wpfile['url'] . "'",$articleHTML);
+		   		$articleHTML = str_replace ("img/" . basename($image) . "", "". $wpfile['url'] . "",$articleHTML);
+		   		
+		   		
+		   		//Check if we found the featured image
+		   		if ($featuredImageName == basename($image)) {
+		   			$featuredImageName = $fname;
+		   		}
+        	}	
+	 	} else {
+			//Update the article html and create the html for the iframe
+			file_put_contents( $articleHtmlFileName, $articleHTML );		
+			$articleHTML = '[auto-iframe link=' . $articleUrl . ']';	 	
+	 	}
+				
+		//Remove the wordpress strip html filters 
+		remove_filter('content_save_pre', 'wp_filter_post_kses');
+		remove_filter('content_filtered_save_pre', 'wp_filter_post_kses');
 
 		//Check if we are updating an existing post
-		$posts = get_posts(array(
-			'numberposts'	=> -1,
-			'post_type'		=> 'post',
-			'meta_key'		=> 'Enterprise-Id',
-			'meta_value'	=> $storyId
-		));
-		
-		MyLog('posts:' . print_r($posts,1));
-		$post_id = 0;
-		if (count($posts) > 0) {
-			$post_id = $posts[0]->ID;
-			MyLog ( "existing post found with ID:$post_id" );
-		}
+		$post_id = getPostByEnterpriseStoryId ($storyId);
 
 		$wp_error = false;
 		if ( $post_id > 0 ){
@@ -450,7 +500,7 @@ function upsertWPIframe( $message, $storyId )
 			$postarr = get_post( $post_id , 'ARRAY_A');
 			
 			$postarr['post_content'] = $articleHTML;
-			$postarr['post_title'] = wp_strip_all_tags( $articleTitle );
+			$postarr['post_title'] =  $articleTitle;
 			$postarr['post_excerpt'] = $excerpt;
 			// switch off the versioning for this post
 			remove_action( 'post_updated', 'wp_save_post_revision' );
@@ -458,12 +508,15 @@ function upsertWPIframe( $message, $storyId )
 			MyLog ("wp_error:" . print_r($wp_error,1));
 			// switch on the versioning for this post
 			add_action( 'post_updated', 'wp_save_post_revision' ); 
-			update_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
+			
+			if ($iframe) {		
+				update_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
+			}	
 		} else {
 			MyLog ( 'insert new post' );
 			$postarr = array(
 			 'ID'		=> $post_id, // does not seem to work
-			 'post_title'    => wp_strip_all_tags( $articleTitle ),
+			 'post_title'    => $articleTitle,
 			 'post_content'  => $articleHTML,
 			 'post_status'   => 'publish',
 			 'post_author'   => 1,
@@ -475,12 +528,24 @@ function upsertWPIframe( $message, $storyId )
 			
 			//Set the Enteprise-ID to uniquely identity the post and find it when updating the content
 			add_post_meta ($post_id, "Enterprise-Id", $storyId);			
-			add_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
+			if ($iframe) {		
+				update_post_meta ($post_id, "Enterprise-Plain-Content", $plainContent);			
+			}	
 		}
 		
+		//Activate the wordpress strip html filters again
+		add_filter('content_save_pre', 'wp_filter_post_kses');
+		add_filter('content_filtered_save_pre', 'wp_filter_post_kses');
+		
 		//Set the featured image
-		//Todo, cleanup previous image
-		if ($featuredImageURI != "") {
+		//Todo, cleanup previous image in case of update
+		if ($featuredImageName != "") {
+			if ($iframe) {
+				$featuredImageURI = $articleDir . "/img/" . $featuredImageName;		
+			} else {
+				$featuredImageURI = $upload_dir['path'] . "/" . $featuredImageName;
+			}
+		
 			$wp_filetype = wp_check_filetype($featuredImageURI, null );
 			$attachment = array(
 				'post_mime_type' => $wp_filetype['type'],
@@ -497,7 +562,13 @@ function upsertWPIframe( $message, $storyId )
 	
 		MyLog ( 'Created or updated post with ID:' . $post_id );
 	}	
-
+	
+	
+	//Clean up
+	if (!$iframe) {
+		deleteDir ($articleDir); 
+	}
+	unlink(TEMPDIR . $zipname);
 }
 
 /*
@@ -510,36 +581,96 @@ function createPageTitle ($componentHTML) {
  	preg_match_all('|<h1[^>]+>(.*)</h[^>]+>|iU', $componentHTML, $h1Headings);
 	preg_match_all('|<h2[^>]+>(.*)</h[^>]+>|iU', $componentHTML, $h2Headings);	
 	
-	if (count ($h1Headings) > 0 ) {
+	MyLog ("h1-headings:" . print_r($h1Headings,1));
+	MyLog ("h2-headings:" . print_r($h2Headings,1));
+	
+	if (count ($h1Headings) > 0 &&
+		count ($h1Headings[0]) > 0 ){
 		$articleTitle = $h1Headings[1][0] ; 
 	}
 		
-	if ((count ($h2Headings) > 0 ) && ($h2Headings[1][0] != "")) {
+	if ( ( count ($h2Headings) > 0 && 
+		   count ($h2Headings[0]) > 0 ) && 
+		   $h2Headings[1][0] != "" ) {
 		if ($articleTitle != "") {
 			$articleTitle = $articleTitle . ' - ';
 		}	
 		$articleTitle = $articleTitle . $h2Headings[1][0];
 	}
 			
-	return $articleTitle;			  
+	return wp_strip_all_tags ($articleTitle);			  
 }
 
+/*
+* Generate excerpt from first paragraphs (p, h, etc) 		
+* @html Article HTML
+*/
+function createExcerpt ($html) {
+	preg_match_all('|class="text [^>]+>(.*)</|iU', $html, $pTags);			
+ 	$excerpt = "";
+	for ($i = 0; $i < count($pTags[1]); $i++) {
+		if ($excerpt != "") {
+			$excerpt = $excerpt . '<br>';
+		}
+		
+		$excerpt = $excerpt . $pTags[1][$i];
+		if (sizeof ($excerpt) > MAX_EXCERPT_LENGTH) {
+			break;
+		}
+	}
+	
+	return truncateString ($excerpt, MAX_EXCERPT_LENGTH, true);
+}
+
+/**
+* Return the body html 
+*/ 
+function getHTMLBody ($html) {
+	$bodyStart = strrpos ($html, "<body>") + strlen("<body>"); 
+	$bodyEnd = strpos ($html, "</body>");
+	
+	return substr ($html, $bodyStart, $bodyEnd - $bodyStart);
+}
+/*
+* Get a wordpress post from the Enterprise Story Id
+*
+* @param $storyId Enterprise Story Id
+* @return Wordpress post id or 0 if not found
+*/
+function getPostByEnterpriseStoryId  ($storyId) {
+	$post_id = 0;
+	
+	$posts = get_posts(array(
+		'numberposts'	=> -1,
+		'post_type'		=> 'post',
+		'meta_key'		=> 'Enterprise-Id',
+		'meta_value'	=> $storyId
+	));
+	if (count($posts) > 0) {
+		$post_id = $posts[0]->ID;
+		MyLog ( "existing post found with ID:$post_id" );
+	}
+		
+	return $post_id;			
+}
+
+/*
 // this function will upload the related images to the upload folder
 // replace the url in the article to point to the uploaded article
 // and store the article as new article
 // this will cause some display problems bcause of javasript and styling not working correctly
 
-function upsertWPArticle( $message )
+function upsertWPArticle( $data )
 {
-	$aurora = New Aurora($message);
-	
+	$url = $data->url;
+	$ID  = $data->id;
+	MyLog ( "Loading data from:$url ");
+	$zipdata = file_get_contents( $url);
 	// save to disk
-	$zipname = $aurora->getArticleZipName();
+	$zipname = basename($url);
 	MyLog ("zipname:" . $zipname  );
-	// store the zipfile in or tempfolder
-	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
+	file_put_contents( TEMPDIR . $zipname, $zipdata);
 	
-		
 	$dirname = basename($zipname,'.article');
 	if ( $dirname != '')
 	{
@@ -556,7 +687,6 @@ function upsertWPArticle( $message )
 		MyLog ( "no dirname found, exit" );
 		return;
 	}	
-	
 	$zip = new ZipArchive;
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
     	$zip->extractTo(TEMPDIR . $dirname);
@@ -567,14 +697,9 @@ function upsertWPArticle( $message )
 		$articleHTML = file_get_contents(TEMPDIR . $dirname .'/output.html');
 		$upload_dir = wp_upload_dir();
 		
-		
-		// --------------------------------
-		// time to do some wordpress logic
-		// --------------------------------
-
 		// upload the template/design.css
-		$designCS = $aurora->getArticleID() . '-design.css';
-		$uploadFile = $upload_dir['path'] . '/' . $designCS;
+		$wpname = $ID . '-design.css';
+		$uploadFile = $upload_dir['path'] . '/' . $wpname;
 		if ( ! file_exists($uploadFile))
 		{
 			MyLog ("upload $uploadFile" );
@@ -585,9 +710,9 @@ function upsertWPArticle( $message )
 		}
 		$articleHTML = str_replace ("template/design.css",  $wpfile['url'] ,$articleHTML);
 		
-		// upload the vendor.js
-		$vendorJs = $aurora->getArticleID() . '-vendor.js';
-		$uploadFile = $upload_dir['path'] . '/' . $vendorJs;
+		// upload the template/design.css
+		$wpname = $ID . '-vendor.js';
+		$uploadFile = $upload_dir['path'] . '/' . $wpname;
 		if ( ! file_exists($uploadFile))
 		{
 			MyLog ( "upload $uploadFile" );
@@ -604,8 +729,8 @@ function upsertWPArticle( $message )
 		foreach( $images as $image )
 		{
 			// check if file exists
-			$fname = $aurora->getArticleID() . '-' . basename($image);
-			//MyLog('upload_dir :' . print_r($upload_dir,1) );
+			$fname = $ID . '-' . basename($image);
+			MyLog('upload_dir :' . print_r($upload_dir,1) );
 			$uploadFile = $upload_dir['path'] . '/' . $fname;
 			
 			MyLog("Checking for file [$uploadFile]");
@@ -627,16 +752,9 @@ function upsertWPArticle( $message )
         	
 		}
 		
-		file_put_contents( $upload_dir['path'] . '/article.txt', $articleHTML );
-		
-
-		$WPNodeName = $aurora->getArticleName(); 
-		
-		MyLog ( "doing our Wordpress thing:" . $WPNodeName );
-		
-		
+		file_put_contents( TEMPDIR . '/article.txt', $articleHTML );
 		// Create post object
-		$post_id = post_exists($WPNodeName);
+		$post_id = post_exists($data->name);
 		MyLog ( "existing post found with ID:$post_id");
 		
 		
@@ -658,11 +776,11 @@ function upsertWPArticle( $message )
 			MyLog ( 'insert new post' );
 			$postarr = array(
 			 'ID'		=> $post_id, // does not seem to work
-			 'post_title'    => wp_strip_all_tags( $WPNodeName ),
+			 'post_title'    => wp_strip_all_tags( $data->name ),
 			 'post_content'  => $articleHTML,
 			 'post_status'   => 'publish',
 			 'post_author'   => 1,
-			 'post_category' => array( 8,39 ) // use metadata
+			 'post_category' => array( 8,39 )
 			);
 			wp_insert_post( $postarr,  $wp_error  );
 		}
@@ -675,7 +793,7 @@ function upsertWPArticle( $message )
     	MyLog ( 'failed to retrieve/unzip from url [' . $url . ']');
 	}
 }
-
+*/
 
 function getImagesFromPath($imageFolder)
 {
