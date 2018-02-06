@@ -33,16 +33,44 @@ The iframe module will allow you to view the published article as it was designe
 The search-everything module will help you to search on your wordpress site for the content of the published articles
 
 Download from :
-`` - https://wordpress.org/plugins/auto-iframe``
+
+``- https://wordpress.org/plugins/auto-iframe``
 ``- https://wordpress.org/plugins/search-everything``
 
 ### PHP dependencies
 To be able to unzip the package that will be downloaded, the php-zip module should be active within PHP configuration. 
 
 ## Installation 
-Place the wwinception.php in the root of the WordPress folder.
+Place the ``wwinception.php`` in the root of the WordPress folder.
 
-#### overrule styling
+
+
+## Configuration
+The configuration needs to be done in the file ``wwinception.php``
+
+the settings to check are:
+
+	- location of temp-folder
+	- location of log-folder
+	- link/reference to (overruled) design.css
+	- link/reference to (overruled) vendor.js
+	- (optional) URL to SubServer
+	
+
+	
+##### Location of temp-folder	
+
+the temp file location is specified in the TEMPDIR 
+``define( 'TEMPDIR'  , '/temp/inception/');``
+
+please make sure this folder is Read/Write for the webservice/PHP process
+
+##### Location of log-folder
+the log folder location is specified in the LOGPATH 
+
+``define( 'LOGPATH'  , dirname(__FILE__) . '/wwlog/'); ``
+
+##### link/reference to (overruled) design.css
 It is now possible to overrule the styling that is send with the article (design.css). With this overrule, you can tune the Aurora component styling to match your CMS styling.
 
 To do so, create a folder called ``AuroraTemplate`` in the ``wp-contents/uploads`` folder and place the `design.css` in that folder.
@@ -57,7 +85,7 @@ if you leave ``ARTICLE_CSS_LINK`` empty, then the .css from the article will be 
 ``define('MY_OWN_URL' , 'http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/wordpress');``
 ``define('ARTICLE_CSS_LINK', MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/design.css');``
 
-#### overrule vendor.js
+#### link/reference to (overruled) vendor.js
 In the same way as overruling the .css the vendor.js can be overruled
 
 Place the ``vendor.js`` in the ``wp-contents/uploads`` folder
@@ -66,30 +94,10 @@ and specify the path in the define ``ARTICLE_JS_LINK``
 ``define('ARTICLE_JS_LINK' , MY_OWN_URL . '/wp-content/uploads/AuroraTemplate/vendor.js');``
 
 
-## Configuration
-The configuration needs to be done in the file ``wwinception.php``
-
-the settings to check are:
-
-	- location of temp-folder
-	- location of logfiles
-	- (optional) URL to SubServer
-	
-
-	
-##### temp folder location	
-
-the temp file location is specified in the TEMPDIR 
-``define( 'TEMPDIR'  , '/temp/inception/');``
-
-please make sure this folder is Read/Write for the webservice/PHP process
-
-##### Log folder location
-the log folder location is specified in the LOGPATH 
-
-``define( 'LOGPATH'  , dirname(__FILE__) . '/wwlog/'); ``
 
 ##### (optional) URL to SubServer
+This is only required in this specific case:
+
 If your wordpress server is not reachable from the outside world then the Aurora publish process can not push the article-packet to your WP.
 To work around this, a 2-step process can be setup using a SubServer.
 In this case the SubServer is running in the cloud and will receive the published articles. 
@@ -100,8 +108,30 @@ To make this work, the URL to the SubServer needs to be specified.
 To 'pull' the content, the wwinception.php needs to be called from crontab on a regular interval.
 
 ## Run Config test
-The configuration can be tested by invoking the script with the 'testconfig' parameter
+The configuration can be tested by invoking the script with the 'testconfig' parameter. Type the url like below in your browser,make sure to replace <server> with your server name or IP-address
+
 ``http://<server>/wordpress/wwinception.php?testconfig=1``
+
+this should return the following information in your browser:
+
+    WW-inception connector
+    -------------------
+    Checking setup
+    - Check temp folder...OK
+     
+    - Check Log folder...OK
+
+    Check SubServer...
+    - Setting for SUBSERVER (AWSSNSURL) is empty, this configuration can only receive push from Inception```
+
+
+#
+
+if you do not see a similar message when you call the URL or when you receive a 404 error this indicates something is not working.
+
+Please check if you have access on your webserver that allows you to run 'other' files (besides index.php) from the root of your wordpress installation. This is mostly handled in the .htaccess file.
+
+***Before you continue***, make sure the 'testconfig' returns with the information above.
 
 
 
@@ -140,7 +170,7 @@ Allthough work needs to be done to have a complete working setup without using t
 
 # Setup the custom channel
 
-As this wordpress integration can be used by both Inception and Wordpress we will give highlevel guidelines only. Detailed instructions can be found in the helpcenter.
+As this wordpress integration can be used by both Inception and Wordpress we will give highlevel guidelines only. Detailed instructions can be found in the Woodwing 	helpcenter.
 
 
 ## Inception: Create the Custom channel
@@ -150,11 +180,11 @@ This setup is described in the Woodwing helpcenter
 
 [How to setup a custom channel in Inception](https://helpcenter.woodwing.com/hc/en-us/articles/205571815-Setting-up-a-custom-Publish-Channel-in-Inception)
 
-The url you need to specify is depending on the location of your wordpress
+The url you need to specify as the end-point is depending on the location of your wordpress
 
-assume your wordpress is located at ``http://MyOwnWordpress``
+Assume your wordpress is located at ``http://MyOwnWordpress``
 
-then to make the publish work as native wordpress post, you will need to specify the endpoint as:
+Then to make the publish work as native wordpress post, you will need to specify the endpoint as:
 
 ``http://<server>/wordpress/wwinception.php``
 

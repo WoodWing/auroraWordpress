@@ -2,7 +2,7 @@
 
 // 
 // -wwinception-
-// version 0.3
+// version 0.4
 // 
 // interface to receive or get WoodWing Inception articles and store them in wordpress
 //
@@ -11,6 +11,8 @@
 // - https://wordpress.org/plugins/search-everything/
 // 
 // Change history
+// 0.4 - Added functionality to map the enterprise category to wordpress category.
+//		 Add the categories defined in WordPress to Enterprise->Brand->Category, match is on name	
 // 0.3 - Only one function used for creating the post, both for native and iframe
 // 0.3 - 'Tunable' design.css can be specified. If specified then this CSS will overrule the one from the article
 // 0.3 - 'Tunable' vendor.js can be specified. If specified then this JS will overrule the one from the article
@@ -18,6 +20,9 @@
 // 0.2 - extract 'hero' component from article and add as feature image
 // 0.2 - extract part of text as excerpt
 // 0.2 - use external-id as reference for detecting update
+
+// todo:
+// - get filetype of image from metadata , but metadata format is difficult to parse
 //
 // --------------------------------------------------
 
@@ -37,7 +42,7 @@ define( 'LOGPATHWITHIP', false);
 // if you want to run from local server, specify the URL to the 
 // AWSSNS subserver, leave empty to disable subserver functionality
 define( 'AWSSNSURL' , '' );
-define( 'SUBKEY'	, '');
+define( 'SUBKEY'	, 'wvr-localhost');
 
 // If not empty the following links will be injected when embedding the article
 // make sure you installed these file manually
@@ -121,6 +126,7 @@ $rawrequest = stream_get_contents($inputSocket);
 fclose($inputSocket);
 
 MyLog('=================================');
+//MyLog('Exit before aything');exit;
 MyLog('=================================');
 // see if there are GET parameters
 MyLog('GET parameters:' . print_r($_GET,1));
@@ -322,9 +328,11 @@ function upsertWPfolder( $data, $storyId, $iframe )
 	MyLog ("zipname:" . $zipname  );
 	// store the zipfile in or tempfolder
 	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
-
+	
+	
 	// get the ID of the article
 	$ID  = $aurora->getArticleID();
+	$dirname = basename($zipname,'.article');
 	
 	// prepare the wp-side
 	$upload_dir = wp_upload_dir();
@@ -356,6 +364,16 @@ function upsertWPfolder( $data, $storyId, $iframe )
 		}
 	}
 	
+	// get the article in JSON structure
+	$articleJson = $aurora->getArticleJSON();
+	file_put_contents( $articleDir . '/article1.json',json_encode($articleJson));
+	
+	// get the metadata in json structure
+	//$metaData = json_decode(file_get_contents($data->metadataUrl));
+	$metaData = $aurora->getArticleMetadata();
+	file_put_contents( $articleDir . '/metadata.json',json_encode($metaData));
+	
+	
 	// now unzip the zipfile to our folder
 	$zip = new ZipArchive;
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
@@ -364,7 +382,7 @@ function upsertWPfolder( $data, $storyId, $iframe )
 
 		//Plain content is required for searching in Wordpress if iFrame is used 		
 		if ($iframe) {		
-			$metaData = json_decode(file_get_contents($data->metadataUrl));
+			
 			$plainContent = $metaData->MetaData->ContentMetaData->PlainContent;
 		}
 				
@@ -496,9 +514,8 @@ function upsertWPfolder( $data, $storyId, $iframe )
 
 		$wp_error = false;
 		if ( $post_id > 0 ){
-			MyLog ( 'updating post' );
+			MyLog ( 'updating post in category:' . $metaData->MetaData->BasicMetaData->Category->Name );
 			$postarr = get_post( $post_id , 'ARRAY_A');
-			
 			$postarr['post_content'] = $articleHTML;
 			$postarr['post_title'] =  $articleTitle;
 			$postarr['post_excerpt'] = $excerpt;
@@ -559,7 +576,10 @@ function upsertWPfolder( $data, $storyId, $iframe )
 			$res1= wp_update_attachment_metadata( $attach_id, $attach_data );
 			$res2= set_post_thumbnail( $post_id, $attach_id );			
 		}   			
-	
+		MyLog ( 'updating category for post:' . $metaData->MetaData->BasicMetaData->Category->Name );
+		
+		setCategory( $post_id, $metaData->MetaData->BasicMetaData->Category->Name ); 
+			
 		MyLog ( 'Created or updated post with ID:' . $post_id );
 	}	
 	
@@ -569,6 +589,25 @@ function upsertWPfolder( $data, $storyId, $iframe )
 		deleteDir ($articleDir); 
 	}
 	unlink(TEMPDIR . $zipname);
+}
+
+
+function setCategory( $post_id, $entCategory)
+{
+	MyLog ( 'updating category for post:' . $entCategory );
+	$wp_category = array();
+	
+	$matchCat = term_exists( $entCategory, $taxonomy = 'category' );
+	if ( $matchCat !== 0 && $matchCat !== null ){
+		
+		MyLog("cat-found[$entCategory]:" . print_r($matchCat,1));
+		
+		$wp_category[] = $matchCat['term_id'];
+		wp_set_post_categories( $post_id, $wp_category, $append = false );
+	}else{
+		MyLog ('Category not found in WordPress');
+	}
+	
 }
 
 /*
