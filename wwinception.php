@@ -389,7 +389,7 @@ function upsertWPfolder( $data, $storyId, $iframe )
 		//Extract content from hero, standfirst or title component and remove it from the html	
 		$articleHTML = file_get_contents ($articleHtmlFileName);		
 		$heroStartTag = "<div class=\"_hero-bg-box\">";
-		$heroEndTag = "</h3>\n</figcaption>\n</div>\n</div>\n</figure>\n</div>";			
+		$heroEndTag = "</figure>\n</div>";
 		$standfirstStartTag = "<div class=\"headline\">";
 		$standfirstEndTag = "</div>";		
 		$titleStartTag = "<h2 class=\"text title\" doc-editable=\"text\">";
